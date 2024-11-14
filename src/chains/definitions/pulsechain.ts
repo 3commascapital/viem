@@ -8,7 +8,7 @@ export const pulsechain = /*#__PURE__*/ defineChain({
   rpcUrls: {
     default: {
       http: ['https://rpc.pulsechain.com'],
-      webSocket: ['wss://rpc.pulsechain.com'],
+      webSocket: ['wss://ws.pulsechain.com'],
     },
   },
   blockExplorers: {

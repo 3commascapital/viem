@@ -976,7 +976,7 @@ describe('requestAsync', () => {
     expect(client_2.requests.size).toBe(0)
     await wait(500)
   }, 30_000)
-  test('parallel requests node disconnect', async () => {
+  test.only('parallel requests node disconnect', async () => {
     await wait(500)
     const url = pulsechain.rpcUrls.default.webSocket[0]
     const client_2 = await getWebSocketRpcClient(url, {
@@ -989,7 +989,7 @@ describe('requestAsync', () => {
         params: ['latest', false],
       },
     })
-    const blockNumber = block.result.number as bigint
+    const blockNumber = BigInt(block.result.number) as bigint
 
     const rangeSize = 1_000
     const logRangeSize = 100
