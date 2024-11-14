@@ -29,14 +29,23 @@ export async function getWebSocketRpcClient(
       const socket = new WebSocket(url)
 
       function onClose_() {
+        console.log('onClose_')
         onClose()
         socket.removeEventListener('close', onClose_)
         socket.removeEventListener('message', onMessage)
         socket.removeEventListener('error', onError)
         socket.removeEventListener('open', onOpen)
       }
-      function onMessage({ data }: MessageEvent) {
-        onResponse(JSON.parse(data))
+      function onMessage(evnt: MessageEvent) {
+        const { data } = evnt
+        try {
+          const parsed = JSON.parse(data)
+          onResponse(parsed)
+        } catch (err) {
+          console.log('data %o', data)
+          console.log(err)
+          throw err
+        }
       }
 
       // Setup event listeners for RPC & subscription responses.

@@ -5,12 +5,56 @@ import { anvilMainnet } from '../../../test/src/anvil.js'
 import { getBlockNumber } from '../../actions/public/getBlockNumber.js'
 import { mine } from '../../actions/test/mine.js'
 
+import { pulsechain } from '~viem/chains/index.js'
 import type { RpcResponse } from '../../types/rpc.js'
 import { numberToHex } from '../encoding/toHex.js'
 import { wait } from '../wait.js'
 import { getWebSocketRpcClient } from './webSocket.js'
 
 const client = anvilMainnet.getClient()
+
+class Task {
+  public resolveWait: (value: unknown) => void
+  constructor(
+    private args: any[],
+    private onStart: (...args: any[]) => Promise<any>,
+    private onFinish: (task: Task) => void,
+  ) {
+    this.resolveWait = () => {}
+  }
+  async wait() {
+    const p = new Promise((resolve) => {
+      this.resolveWait = resolve
+    }).then(() => this.start())
+    return p
+  }
+  async start() {
+    return this.onStart(...this.args).then((result) => {
+      this.onFinish(this)
+      return result
+    })
+  }
+}
+
+const limiter = (limit: number, fn: (...args: any[]) => Promise<any>) => {
+  const onFinish = (task: Task) => {
+    const waiting = queue[limit]
+    const index = queue.indexOf(task)
+    // remove task from queue
+    if (index !== -1) queue.splice(index, 1)
+    // start waiting task
+    if (waiting) waiting.resolveWait!(null)
+  }
+  const queue: Task[] = []
+  return async (...args: any[]) => {
+    const task = new Task(args, fn, onFinish)
+    queue.push(task)
+    if (queue.length > limit) {
+      return task.wait()
+    }
+    return task.start()
+  }
+}
 
 describe('getWebSocketRpcClient', () => {
   test('creates WebSocket instance', async () => {
@@ -932,6 +976,75 @@ describe('requestAsync', () => {
     expect(client_2.requests.size).toBe(0)
     await wait(500)
   }, 30_000)
+  test('parallel requests node disconnect', async () => {
+    await wait(500)
+    const url = pulsechain.rpcUrls.default.webSocket[0]
+    const client_2 = await getWebSocketRpcClient(url, {
+      reconnect: true,
+      keepAlive: true,
+    })
+    const block = await client_2.requestAsync({
+      body: {
+        method: 'eth_getBlockByNumber',
+        params: ['latest', false],
+      },
+    })
+    const blockNumber = block.result.number as bigint
+
+    const rangeSize = 1_000
+    const logRangeSize = 100
+    const range = Array.from({ length: rangeSize })
+    const topics = [
+      // any transfer event
+      '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+    ]
+    const logRange = Array.from({ length: rangeSize / logRangeSize }).map(
+      (_, i) => i,
+    )
+    const response = await Promise.all([
+      ...logRange.map(
+        limiter(1, async (_, i) => {
+          const toBlock = blockNumber - BigInt(logRangeSize) * BigInt(i)
+          const fromBlock = toBlock - BigInt(logRangeSize) + 1n
+          return await client_2
+            .requestAsync({
+              body: {
+                method: 'eth_getLogs',
+                params: [
+                  {
+                    topics,
+                    fromBlock: numberToHex(fromBlock),
+                    toBlock: numberToHex(toBlock),
+                  },
+                ],
+              },
+            })
+            .catch((err) => {
+              throw err
+            })
+        }),
+      ),
+      ...range.map(
+        limiter(2, async (_, i) => {
+          return await client_2
+            .requestAsync({
+              body: {
+                method: 'eth_getBlockByNumber',
+                params: [numberToHex(blockNumber - BigInt(i)), false],
+              },
+            })
+            .catch((err) => {
+              throw err
+            })
+        }),
+      ),
+    ])
+    expect(response.slice(logRange.length).map((r) => r.result.number)).toEqual(
+      range.map((_, i) => numberToHex(blockNumber - BigInt(i))),
+    )
+    expect(client_2.requests.size).toBe(0)
+    await wait(500)
+  }, 300_000)
 
   test('invalid request', async () => {
     const client = await getWebSocketRpcClient(anvilMainnet.rpcUrl.ws)
@@ -955,7 +1068,7 @@ describe('requestAsync', () => {
     )
   })
 
-  test.skip('timeout', async () => {
+  test('timeout', async () => {
     const client = await getWebSocketRpcClient(anvilMainnet.rpcUrl.ws)
 
     await expect(() =>
